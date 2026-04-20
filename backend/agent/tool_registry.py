@@ -27,8 +27,6 @@ class ToolContext:
     # 当前会话状态（随执行动态更新）
     current_outline: Optional[dict] = None
     has_outline: bool = False
-    has_report: bool = False
-    current_report_html: str = ""
     llm_service: Optional[Any] = None
     step_results: dict = field(default_factory=dict)
 

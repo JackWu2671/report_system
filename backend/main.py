@@ -95,11 +95,6 @@ async def lifespan(app: FastAPI):
     container.register("chat_history", chat_history)
     container.register("kb_store", kb_store)
 
-    # Mock 数据服务
-    from services.data.mock_data_service import MockDataService
-    mock_data_service = MockDataService(settings.MOCK_DATA_DIR)
-    container.register("mock_data_service", mock_data_service)
-
     # IndicatorResolver（L5 paragraph 模板库）
     from services.data.indicator_resolver import IndicatorResolver
     _default_indicators_path = os.path.join(os.path.dirname(__file__), "services", "data", "default_indicators.json")
@@ -158,7 +153,7 @@ async def lifespan(app: FastAPI):
     await llm_service.close()
 
 
-app = FastAPI(title="报告生成系统", version="3.1.0", lifespan=lifespan)
+app = FastAPI(title="看网分析系统", version="4.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.include_router(chat_router)
 app.include_router(admin_router)

@@ -10,9 +10,6 @@ class HistoryMiddleware(AgentMiddleware):
         for m in msgs:
             meta = m.get("metadata") or {}
             if meta.get("is_thinking"): continue
-            # 检测是否有报告
-            if meta.get("report_html"):
-                ctx.has_report = True
             content = m["content"]
             if m["role"]=="assistant" and m.get("msg_type")=="skill_result":
                 content = f"[摘要]{meta.get('summary','')}" if meta.get("summary") else "[已执行]"

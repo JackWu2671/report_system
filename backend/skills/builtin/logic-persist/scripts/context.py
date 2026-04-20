@@ -1,4 +1,4 @@
-"""skill-factory 上下文、服务束和 SSE 工具函数。"""
+"""logic-persist 上下文、服务束和 SSE 工具函数。"""
 import json
 from dataclasses import dataclass, field
 from typing import Optional
@@ -17,9 +17,8 @@ def design_step(step: str, status: str, result: dict = None) -> str:
 
 @dataclass
 class SkillFactoryContext:
-    """skill-factory 内部传递的上下文。"""
+    """logic-persist 内部传递的上下文。"""
     raw_input: str = ""
-    mode: str = "full"
     # Sub-Step 1 产出
     scene_intro: str = ""
     keywords: list[str] = field(default_factory=list)
@@ -27,7 +26,7 @@ class SkillFactoryContext:
     # Sub-Step 2 产出
     structured_text: str = ""
     dimension_hints: list[dict] = field(default_factory=list)
-    kb_nodes: list[dict] = field(default_factory=list)  # 知识库节点清单（供后验校验用）
+    kb_nodes: list[dict] = field(default_factory=list)
     # Sub-Step 3 产出
     outline_json: Optional[dict] = None
     outline_md: str = ""
@@ -35,10 +34,8 @@ class SkillFactoryContext:
     # Sub-Step 4 产出
     bindings: list[dict] = field(default_factory=list)
     # Sub-Step 5 产出
-    report_html: str = ""
-    # Sub-Step 6 产出
-    skill_name: str = ""
-    skill_dir: str = ""
+    template_name: str = ""
+    template_dir: str = ""
     source: str = "design"
     version: int = 1
     new_nodes: list[dict] = field(default_factory=list)
@@ -53,16 +50,15 @@ class SkillFactoryContext:
 
 class ServiceBundle:
     """打包所有服务依赖，SubSkill 按需取用。"""
-    __slots__ = ("llm", "embedding", "faiss", "neo4j", "renderer", "session", "kb", "indicator_resolver")
+    __slots__ = ("llm", "embedding", "faiss", "neo4j", "session", "kb", "indicator_resolver")
 
     def __init__(self, llm_service, embedding_service, faiss_retriever,
-                 neo4j_retriever, outline_renderer, session_service, kb_store,
+                 neo4j_retriever, session_service, kb_store,
                  indicator_resolver=None):
         self.llm = llm_service
         self.embedding = embedding_service
         self.faiss = faiss_retriever
         self.neo4j = neo4j_retriever
-        self.renderer = outline_renderer
         self.session = session_service
         self.kb = kb_store
         self.indicator_resolver = indicator_resolver
