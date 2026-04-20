@@ -69,7 +69,6 @@ def mock_tool_ctx():
     ctx.container = MagicMock()
     ctx.trace_callback = None
     ctx.has_outline = False
-    ctx.has_report = False
     ctx.current_outline = None
     ctx.step_results = {}
     return ctx

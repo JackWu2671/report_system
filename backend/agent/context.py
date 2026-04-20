@@ -7,7 +7,7 @@ class SkillContext:
     chat_history: list[dict] = field(default_factory=list)
     current_outline: Optional[dict] = None; outline_summary: str = ""
     has_pending_confirm: bool = False; pending_confirm_options: Optional[list[dict]] = None
-    step_results: dict = field(default_factory=dict); current_report: Optional[str] = None
+    step_results: dict = field(default_factory=dict)
     trace_callback: Optional[Callable] = None  # LLM 轨迹回调
 
 @dataclass
@@ -35,4 +35,4 @@ class AgentContext:
     chat_history: list[dict] = field(default_factory=list)
     current_outline: Optional[dict] = None; outline_summary: str = ""
     has_pending_confirm: bool = False; pending_confirm_options: Optional[list[dict]] = None
-    has_outline: bool = False; has_report: bool = False
+    has_outline: bool = False

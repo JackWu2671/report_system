@@ -91,13 +91,14 @@ def _is_fallback_selection(message: str, candidates: list) -> bool:
 
 # ─── System Prompt 基础指令 ───
 BASE_INSTRUCTIONS = """\
-你是智能看网报告助手。帮助用户生成网络分析大纲和报告，并支持专家将看网逻辑固化为可复用能力。
+你是智能看网分析助手。帮助用户生成网络分析大纲，并支持专家将看网逻辑固化为可复用大纲模板。
+系统最终产物是大纲 JSON，不生成报告。
 
 ## 工具调用诚信规则【最高优先级，绝对不得违反】
 - 【严禁】在未实际调用工具的情况下，用文字声称已完成工具操作（如"已为您修改了阈值"）
 - 【严禁】假装或推测工具结果：必须真实调用工具并等待返回，才能向用户报告操作结果
 - 每一句"已完成/已修改/已注入/已执行"，背后必须有对应的实际工具调用记录
-- 每轮对话都是独立的工具执行序列：即使上一轮对话中已执行过相同操作（如第二轮调用过 inject_params 修改过阈值），本轮同类请求也必须重新执行完整工具流程，不得因"上次已操作过"而省略工具调用
+- 每轮对话都是独立的工具执行序列：即使上一轮对话中已执行过相同操作，本轮同类请求也必须重新执行完整工具流程
 - 如果不确定需要调用哪个工具，宁可多调用一次 get_session_status/get_current_outline 确认，也不得直接用文字回复
 
 ## search_skill 失败处理规则
@@ -117,23 +118,18 @@ BASE_INSTRUCTIONS = """\
   ① 必须先调 get_current_outline 获取最新大纲 JSON（不得凭记忆或历史对话猜测 node_id）
   ② 从返回的 JSON 中找到所有包含该参数的 L5 节点的 node_id
   ③ 对每个目标节点分别调用 inject_params(node_id, param_key, param_value, operator)
-  ④ 全部注入完成后，告知用户哪些节点已更新，询问是否生成报告
-  【注意】即使本轮与上一轮修改的是同一参数（如连续两轮修改阈值），也必须重新执行 ①②③ 全部步骤
-  【此流程每个步骤必须实际执行，不得跳过，不得用文字描述代替工具调用】
-- 用户要求生成报告 → execute_data + render_report
-- 用户说"保存/沉淀/确认保存" → persist_skill
+  ④ 全部注入完成后，告知用户哪些节点已更新
+  【注意】即使本轮与上一轮修改的是同一参数，也必须重新执行 ①②③ 全部步骤
+- 用户说"保存/沉淀/确认保存" → persist_outline
 
 ### 当 has_outline=false（会话无大纲）时：
 - 用户输入超过 80 字的看网逻辑文本（描述分析经验/规则）→ understand_intent(expert_input)，完成后停止等待用户指示
-- 用户询问网络分析/评估（短句）→ 先调 skill_router(query) 检索已沉淀能力；若有候选则等待用户选择；若无候选则直接调 search_skill(query)
+- 用户询问网络分析/评估（短句）→ 先调 skill_router(query) 检索已沉淀模板；若有候选则等待用户选择；若无候选则直接调 search_skill(query)
 
 ## 关键约束【严格遵守，不得违反】
-- 【禁止】search_skill 完成后自动调用 execute_data/render_report，必须先询问用户
-- 【禁止】clip_outline 或 inject_params 完成后自动调用 execute_data/render_report，必须先询问用户
-- 【禁止】understand_intent 完成后自动调用 persist_skill，必须等用户明确说"保存"
 - 【禁止】has_outline=true 时因用户说"删除X"而调用 search_skill，应直接调 clip_outline
-- 生成报告必须先执行 execute_data，再执行 render_report（此顺序不可颠倒）
-- persist_skill 必须等用户明确说"保存/沉淀/确认保存"后才调用，绝不主动触发
+- 【禁止】understand_intent 完成后自动调用 persist_outline，必须等用户明确说"保存"
+- persist_outline 必须等用户明确说"保存/沉淀/确认保存"后才调用，绝不主动触发
 """
 
 # ─── Skill System Prompt 段落（由 SkillRegistry 生成）───
@@ -282,15 +278,12 @@ class LeadAgent:
             trace_callback=trace_cb,
             current_outline=ctx.current_outline,
             has_outline=ctx.has_outline,
-            has_report=ctx.has_report,
         )
         tool_ctx._trace_id = trace.trace_id  # 传给 engine 用于 tool_call_traces
 
         # ─── 运行 ReAct 引擎 ───
         reply_content = ""
         collected_thinking: list[dict] = []
-        report_html = ""
-        report_title = ""
         outline_md = ""
         _outline_building = False  # 追踪是否在新一轮大纲流中
 
@@ -321,17 +314,12 @@ class LeadAgent:
                     else:
                         collected_thinking.append(e)
                 elif t == "outline_done":
-                    _outline_building = False  # 本轮大纲流结束
-                elif t == "report_done":
-                    report_title = p.get("title", "报告")
+                    _outline_building = False
                 elif t == "outline_chunk":
                     if not _outline_building:
-                        # 新一轮大纲流开始（clip/search 产生新大纲），清空旧内容
                         outline_md = ""
                         _outline_building = True
                     outline_md += p.get("content", "")
-                elif t == "report_chunk":
-                    report_html += p.get("content", "")
             except Exception as e:
                 logger.debug(f"SSE 事件解析失败（跳过）: {e} raw={sse_str[:100]!r}")
 
@@ -341,12 +329,6 @@ class LeadAgent:
             meta["thinking"] = collected_thinking
         if outline_md:
             meta["outline_md"] = outline_md
-        if report_html:
-            meta["report_html"] = report_html
-            meta["report_title"] = report_title or "报告"
-        if tool_ctx.has_report and not report_html:
-            # 报告由工具内部直接落库，未经 report_chunk SSE 流出
-            logger.warning(f"has_report=True 但 report_html 为空，报告可能由 executor 直接落库 session={session_id}")
 
         await self._ch.add_message(
             session_id, "assistant",
@@ -375,7 +357,7 @@ class LeadAgent:
         yield self._ev("skill_selected", skill_id=candidate.get("skill_id"), display_name=display_name)
         yield self._ev("chat_reply", content=f"正在加载「{display_name}」的大纲...")
 
-        executor = self._loader.get_executor("outline-generate")
+        executor = self._loader.get_executor("customer-analysis")
         if not executor or not hasattr(executor, "load_skill_outline"):
             yield self._ev("chat_reply", content="大纲加载器未就绪，请稍后再试。")
             return
@@ -404,7 +386,7 @@ class LeadAgent:
                 elif isinstance(item, str):
                     yield item
             if result and result.success:
-                yield self._ev("chat_reply", content="大纲已生成，请查看右侧面板。\n\n是否立即生成报告？")
+                yield self._ev("chat_reply", content="大纲已生成，请查看右侧面板。\n\n请查看右侧大纲面板。")
             return
 
         outline_json, outline_md = loaded
@@ -416,7 +398,7 @@ class LeadAgent:
         yield json.dumps({"type": "outline_chunk", "content": outline_md}, ensure_ascii=False)
         yield json.dumps({"type": "outline_done", "anchor": anchor_info}, ensure_ascii=False)
         yield self._ev("outline_updated", outline_json=outline_json)
-        yield self._ev("chat_reply", content=f"已加载「{display_name}」的大纲，请查看右侧面板。\n\n是否立即生成报告？")
+        yield self._ev("chat_reply", content=f"已加载「{display_name}」的大纲，请查看右侧面板。\n\n请查看右侧大纲面板。")
 
     async def _confirm(self, ctx: AgentContext, user_message: str, trace_cb=None) -> AsyncGenerator[str, None]:
         """处理 L5 层级确认。"""
@@ -445,7 +427,7 @@ class LeadAgent:
         await self._ss.delete_pending_confirm(ctx.session_id)
         yield self._ev("chat_reply", content="正在生成大纲...")
 
-        executor = self._loader.get_executor("outline-generate")
+        executor = self._loader.get_executor("customer-analysis")
         if executor and hasattr(executor, "execute_from_node"):
             from agent.context import SkillResult
             result = None
@@ -466,7 +448,7 @@ class LeadAgent:
                 )
                 if subtree:
                     yield self._ev("outline_updated", outline_json=subtree)
-                yield self._ev("chat_reply", content="大纲已生成，请查看右侧面板。\n\n是否立即生成报告？")
+                yield self._ev("chat_reply", content="大纲已生成，请查看右侧面板。\n\n请查看右侧大纲面板。")
                 await self._ch.add_message(ctx.session_id, "assistant", "已生成大纲", msg_type="outline")
 
     @staticmethod

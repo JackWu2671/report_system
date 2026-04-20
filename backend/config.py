@@ -45,15 +45,6 @@ class Settings(BaseSettings):
     # ─── ReAct 引擎 ───
     REACT_MAX_STEPS: int = 15
 
-    # ─── 报告 ───
-    REPORT_TEMPLATE_DIR: str = "./skills/builtin/report-generate/templates/report"
-
-    # ─── Mock 数据 ───
-    MOCK_DATA_DIR: str = "./data/mock"
-
-    # ─── 数据执行 ───
-    DATA_EXECUTE_TIMEOUT: int = 30
-
     # ─── Logging ───
     LOG_DIR: str = "./data/logs"
     LOG_LEVEL: str = "DEBUG"

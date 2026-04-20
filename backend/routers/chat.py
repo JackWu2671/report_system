@@ -42,22 +42,11 @@ async def get_outline(sid:str, h=Depends(_ch)):
 
 @router.get("/sessions/{sid}/artifacts")
 async def get_artifacts(sid:str, h=Depends(_ch)):
-    """获取会话产物：大纲 JSON + 报告 HTML（替代前端遍历消息的脆弱逻辑）。"""
+    """获取会话产物：大纲 JSON。"""
     outline_state = await h.get_outline_state(sid)
-    # 从最近消息中找报告
-    messages = await h.get_messages(sid, limit=100)
-    report_html, report_title = "", ""
-    for m in reversed(messages):
-        meta = m.get("metadata") or {}
-        if meta.get("report_html"):
-            report_html = meta["report_html"]
-            report_title = meta.get("report_title", "报告")
-            break
     return {
         "outline_json": outline_state.get("outline_json") if outline_state else None,
         "anchor_info": outline_state.get("anchor_info") if outline_state else None,
-        "report_html": report_html,
-        "report_title": report_title,
     }
 
 @router.delete("/sessions/{sid}")
