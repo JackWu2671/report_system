@@ -20,7 +20,7 @@ from agent.react_engine import SimpleReActEngine
 from agent.skill_registry import SkillRegistry
 from agent.skill_loader import SkillLoader
 from agent.tool_registry import ToolContext, ToolRegistry
-from agent.tool_definitions import register_all_tools
+from agent.tools import register_all_tools
 from llm.service import LLMService
 from services.chat_history import ChatHistoryService
 from services.session_service import SessionService
