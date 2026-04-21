@@ -54,6 +54,6 @@ class Settings(BaseSettings):
     # EXTERNAL_API_BASE_URL: str = ""
     # EXTERNAL_API_KEY: str = ""
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 settings = Settings()
