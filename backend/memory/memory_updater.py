@@ -106,12 +106,14 @@ class MemoryUpdater:
         )
 
         prompt = EXTRACT_PROMPT.format(conversations=conversations)
+        logger.info(f"[memory_updater] 记忆提取 prompt ({len(prompt)}ch): {prompt[:400]}")
         try:
             from llm.config import LLMConfig
             cfg = LLMConfig(temperature=0.2, max_tokens=1000)
             raw = await self._llm.complete(
                 [{"role": "user", "content": prompt}], cfg
             )
+            logger.info(f"[memory_updater] 记忆提取结果 ({len(raw)}ch): {raw[:400]}")
             # 解析 JSON
             import re
             code_block = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', raw, re.DOTALL)
@@ -119,7 +121,7 @@ class MemoryUpdater:
                 raw = code_block.group(1).strip()
             update = json.loads(raw)
             self._store.merge_update(update)
-            logger.info(f"MemoryUpdater: 处理了 {len(batch)} 条对话，提取 {len(update.get('facts', []))} 条 facts")
+            logger.info(f"[memory_updater] 处理了 {len(batch)} 条对话，提取 {len(update.get('facts', []))} 条 facts")
         except Exception as e:
             logger.warning(f"MemoryUpdater: 记忆提取失败（已忽略）: {e}")
 

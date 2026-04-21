@@ -40,6 +40,39 @@ def _ev(t: str, **kw) -> str:
     return json.dumps({"type": t, **kw}, ensure_ascii=False)
 
 
+def _log_react_request(step: int, messages: list[dict]) -> None:
+    """打印 ReAct 每一步发送给 LLM 的完整消息（截断长内容）。"""
+    logger.info(f"─── ReAct step {step} ▶ 发送 {len(messages)} 条消息 ───")
+    for i, m in enumerate(messages):
+        role = m.get("role", "?")
+        content = str(m.get("content") or "")
+        tool_calls_in_msg = m.get("tool_calls")
+        if role == "system":
+            logger.info(f"  [{i}] system ({len(content)}ch): {content[:500]}")
+        elif role == "tool":
+            logger.info(f"  [{i}] tool[{m.get('tool_call_id', '')}] ({len(content)}ch): {content[:300]}")
+        elif tool_calls_in_msg:
+            calls_str = ", ".join(
+                f"{tc['function']['name']}({tc['function'].get('arguments','')[:80]})"
+                for tc in tool_calls_in_msg
+            )
+            logger.info(f"  [{i}] assistant tool_calls: {calls_str}")
+        else:
+            logger.info(f"  [{i}] {role} ({len(content)}ch): {content[:300]}")
+
+
+def _log_react_response(step: int, content_text: str, reasoning_text: str, tool_calls: list) -> None:
+    """打印 ReAct 每一步 LLM 的响应。"""
+    if tool_calls:
+        for tc in tool_calls:
+            args_str = json.dumps(tc.get("arguments", {}), ensure_ascii=False)
+            logger.info(f"─── ReAct step {step} ◀ tool_call → {tc.get('name')} | args: {args_str[:300]}")
+    else:
+        logger.info(f"─── ReAct step {step} ◀ text reply ({len(content_text)}ch): {content_text[:400]}")
+    if reasoning_text:
+        logger.info(f"─── ReAct step {step}   reasoning ({len(reasoning_text)}ch): {reasoning_text[:200]}")
+
+
 class SimpleReActEngine:
 
     def __init__(self, llm_service: LLMService, tool_registry: ToolRegistry):
@@ -91,6 +124,9 @@ class SimpleReActEngine:
             llm_error = None
             t0 = time.perf_counter()  # 每步单独计时
 
+            # 打印本轮发给 LLM 的完整消息列表
+            _log_react_request(step, messages)
+
             try:
                 async for chunk in self._llm.complete_stream(messages, cfg, tools=tool_schemas):
                     if "content" in chunk:
@@ -111,6 +147,9 @@ class SimpleReActEngine:
 
             content_text = "".join(content_parts)
             reasoning_text = "".join(reasoning_parts)
+
+            # 打印本轮 LLM 响应
+            _log_react_response(step, content_text, reasoning_text, tool_calls)
 
             # 记录 LLM trace（如有 callback）
             # response_content：有文字用文字；纯工具调用时序列化 tool_calls 决策
@@ -222,8 +261,10 @@ class SimpleReActEngine:
                 if status == "stop":
                     messages.append({"role": "user", "content": loop_msg})
                     # 强制最后一次 LLM 调用输出文字答案（不带 tools）
+                    logger.info(f"─── ReAct step {step} [循环终止] 强制文字回复 ───")
                     try:
                         final_result = await self._llm.complete(messages, cfg)
+                        logger.info(f"─── ReAct step {step} [循环终止] 回复: {(final_result or '')[:300]}")
                         yield _ev("chat_reply", content=final_result or "（循环已终止，请查看已生成的结果）")
                     except Exception:
                         yield _ev("chat_reply", content="（循环已终止，请查看已生成的结果）")

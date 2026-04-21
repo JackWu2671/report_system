@@ -118,12 +118,14 @@ async def compress(messages: list[dict], llm_service) -> list[dict]:
     )
 
     prompt = DOMAIN_SUMMARY_PROMPT.format(history=history_text)
+    logger.info(f"[context_compressor] 摘要 prompt ({len(prompt)}ch): {prompt[:400]}")
     try:
         from llm.config import LLMConfig
         summary_config = LLMConfig(temperature=0.3, max_tokens=600)
         summary_text = await llm_service.complete(
             [{"role": "user", "content": prompt}], summary_config
         )
+        logger.info(f"[context_compressor] 摘要结果 ({len(summary_text)}ch): {summary_text[:400]}")
     except Exception as e:
         logger.warning(f"上下文压缩摘要失败，跳过压缩: {e}")
         return messages
