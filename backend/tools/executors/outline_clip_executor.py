@@ -13,6 +13,7 @@ from agent.context import SkillContext, SkillResult
 from llm.agent_llm import AgentLLM
 from llm.config import LLMConfig
 from llm.service import LLMService
+from tools.executors.outline_ops import collect_nodes_text, delete_node, keep_only
 
 logger = logging.getLogger(__name__)
 
@@ -54,17 +55,18 @@ class OutlineClipExecutor:
         instruction = ctx.params.get("instructions", ctx.user_message)
         yield _ts("outline_clip", "running", "正在解析裁剪指令...")
 
-        # 收集所有节点名
-        nodes_text = self._collect_nodes_text(outline)
+        nodes_text = collect_nodes_text(outline)
 
         agent = AgentLLM(self._llm, "", LLMConfig(temperature=0.1, max_tokens=1024),
                          trace_callback=ctx.trace_callback, llm_type="outline_clip", step_name="parse_clip")
+        prompt = CLIP_PROMPT.format(nodes_text=nodes_text, user_instruction=instruction)
+        logger.info(f"[outline_clip] 节点文本:\n{nodes_text}")
         try:
-            prompt = CLIP_PROMPT.format(nodes_text=nodes_text, user_instruction=instruction)
             result = await agent.chat_json(prompt)
             instructions = result.get("instructions", [])
+            logger.info(f"[outline_clip] 解析到 {len(instructions)} 条操作: {instructions}")
         except Exception as e:
-            logger.warning(f"裁剪指令解析失败: {e}")
+            logger.warning(f"[outline_clip] 裁剪指令解析失败: {e}")
             yield SkillResult(False, f"无法解析裁剪指令: {e}")
             return
 
@@ -75,17 +77,20 @@ class OutlineClipExecutor:
             if t == "delete_node":
                 target = inst.get("target_name", "")
                 if target:
-                    outline = self._delete_node(outline, target)
+                    outline = delete_node(outline, target)
                     deleted_nodes.append(target)
+                    logger.info(f"[outline_clip] delete_node: {target!r}")
             elif t == "filter_param":
                 target = inst.get("target_name", "")
                 pk, pv = inst.get("param_key", ""), inst.get("param_value", "")
                 if target and pk:
                     modified_params.append({"node": target, pk: pv})
+                    logger.info(f"[outline_clip] filter_param: {target!r} {pk}={pv!r}")
             elif t == "keep_only":
                 targets = inst.get("target_names", [])
                 if targets:
-                    outline = self._keep_only(outline, set(targets))
+                    outline = keep_only(outline, set(targets))
+                    logger.info(f"[outline_clip] keep_only: {targets}")
 
         yield _ts("outline_clip", "done",
                    f"裁剪完成: 删除{len(deleted_nodes)}个节点, 修改{len(modified_params)}个参数")
@@ -100,41 +105,3 @@ class OutlineClipExecutor:
                                 "deleted_nodes": deleted_nodes,
                                 "modified_params": modified_params})
 
-    @staticmethod
-    def _collect_nodes_text(node, depth=0):
-        lines = []
-        name = node.get("name", "")
-        level = node.get("level", 0)
-        if name:
-            lines.append(f"{'  '*depth}- {name} (L{level})")
-        for child in node.get("children", []):
-            lines.append(OutlineClipExecutor._collect_nodes_text(child, depth + 1))
-        return "\n".join(lines)
-
-    @staticmethod
-    def _delete_node(node, target_name):
-        if not node.get("children"):
-            return node
-        node["children"] = [
-            OutlineClipExecutor._delete_node(c, target_name)
-            for c in node["children"]
-            if c.get("name") != target_name
-        ]
-        return node
-
-    @staticmethod
-    def _keep_only(node, target_names):
-        if not node.get("children"):
-            return node
-        node["children"] = [
-            OutlineClipExecutor._keep_only(c, target_names)
-            for c in node["children"]
-            if c.get("name") in target_names or OutlineClipExecutor._has_descendant(c, target_names)
-        ]
-        return node
-
-    @staticmethod
-    def _has_descendant(node, names):
-        if node.get("name") in names:
-            return True
-        return any(OutlineClipExecutor._has_descendant(c, names) for c in node.get("children", []))

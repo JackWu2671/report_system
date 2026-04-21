@@ -1,5 +1,5 @@
 """GraphRAG 大纲生成执行器。"""
-import json, logging
+import copy, json, logging
 from typing import AsyncGenerator, Union
 from agent.context import SkillContext, SkillResult
 from llm.agent_llm import AgentLLM
@@ -10,6 +10,7 @@ from pipeline.neo4j_retriever import Neo4jRetriever
 from pipeline.outline_renderer import OutlineRenderer
 from services.embedding_service import EmbeddingService
 from services.session_service import SessionService
+from tools.executors.outline_ops import collect_nodes_text, delete_node, keep_only, count_nodes
 from utils.trace_logger import TraceLogger
 
 logger = logging.getLogger(__name__)
@@ -94,7 +95,7 @@ class GraphRAGExecutor:
             subtree, was_filtered = await self._clip_by_query(query, subtree, ctx.trace_callback)
             trace.log_timed("s6_5", "s6_5")
             if was_filtered:
-                yield _ts("query_filter", "done", f"已按查询意图过滤，保留 {self._count_children(subtree)} 个节点")
+                yield _ts("query_filter", "done", f"已按查询意图过滤，保留 {count_nodes(subtree)} 个节点")
             else:
                 yield _ts("query_filter", "done", "查询覆盖完整子树，无需过滤")
 
@@ -168,13 +169,13 @@ class GraphRAGExecutor:
 
     async def _clip_by_query(self, query: str, subtree: dict, trace_callback=None) -> tuple[dict, bool]:
         """根据用户查询自动裁剪子树，返回 (subtree, was_filtered)。
-        使用与 OutlineClipExecutor 相同的结构化操作格式。
+        使用与 OutlineClipExecutor 相同的结构化操作格式（见 outline_ops.py）。
         """
-        import copy
         from llm.config import LLMConfig
 
-        nodes_text = self._collect_nodes_text(subtree)
+        nodes_text = collect_nodes_text(subtree, skip_l5=True, max_depth=3)
         prompt = self.QUERY_CLIP_PROMPT.format(query=query, nodes_text=nodes_text)
+        logger.info(f"[clip_by_query] query={query!r}\n节点列表:\n{nodes_text}")
 
         try:
             agent = AgentLLM(
@@ -186,78 +187,30 @@ class GraphRAGExecutor:
             )
             result = await agent.chat_json(prompt)
             instructions = result.get("instructions", [])
+            logger.info(f"[clip_by_query] 解析到 {len(instructions)} 条操作: {instructions}")
         except Exception as e:
-            logger.warning(f"clip_by_query LLM 失败，保留完整子树: {e}")
+            logger.warning(f"[clip_by_query] LLM 失败，保留完整子树: {e}")
             return subtree, False
 
         if not instructions:
+            logger.info("[clip_by_query] 无操作指令，保留完整子树")
             return subtree, False
 
         node = copy.deepcopy(subtree)
-        changed = False
         for inst in instructions:
             t = inst.get("type")
             if t == "delete_node":
                 target = inst.get("target_name", "")
                 if target:
-                    node = self._delete_node(node, target)
-                    changed = True
+                    node = delete_node(node, target)
+                    logger.info(f"[clip_by_query] delete_node: {target!r}")
             elif t == "keep_only":
                 targets = inst.get("target_names", [])
                 if targets:
-                    node = self._keep_only(node, set(targets))
-                    changed = True
+                    node = keep_only(node, set(targets))
+                    logger.info(f"[clip_by_query] keep_only: {targets}")
 
-        logger.info(f"clip_by_query: {len(instructions)} 条操作，changed={changed}")
-        return node, changed
-
-    @staticmethod
-    def _collect_nodes_text(node, depth=0) -> str:
-        """收集大纲节点文本，供 LLM 理解结构（与 OutlineClipExecutor 相同逻辑）。"""
-        lines = []
-        name = node.get("name", "")
-        level = node.get("level", 0)
-        if name and level != 5:
-            lines.append(f"{'  ' * depth}- {name} (L{level})")
-        if depth < 3:
-            for child in node.get("children", []):
-                lines.append(GraphRAGExecutor._collect_nodes_text(child, depth + 1))
-        return "\n".join(lines)
-
-    @staticmethod
-    def _delete_node(node: dict, target_name: str) -> dict:
-        if not node.get("children"):
-            return node
-        node["children"] = [
-            GraphRAGExecutor._delete_node(c, target_name)
-            for c in node["children"]
-            if c.get("name") != target_name
-        ]
-        return node
-
-    @staticmethod
-    def _keep_only(node: dict, target_names: set) -> dict:
-        if not node.get("children"):
-            return node
-        node["children"] = [
-            GraphRAGExecutor._keep_only(c, target_names)
-            for c in node["children"]
-            if c.get("name") in target_names or GraphRAGExecutor._has_descendant(c, target_names)
-        ]
-        return node
-
-    @staticmethod
-    def _has_descendant(node: dict, names: set) -> bool:
-        if node.get("name") in names:
-            return True
-        return any(GraphRAGExecutor._has_descendant(c, names) for c in node.get("children", []))
-
-    @staticmethod
-    def _count_children(node: dict) -> int:
-        count = 1
-        for c in node.get("children", []):
-            count += GraphRAGExecutor._count_children(c)
-        return count
+        return node, True
 
     def merge_paragraph(self, node: dict, skill_dir: str = "") -> None:
         """遍历大纲所有 L5 节点，从 IndicatorResolver 读取 paragraph 并写入节点。"""

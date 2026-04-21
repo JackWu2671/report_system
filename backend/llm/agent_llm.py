@@ -9,11 +9,14 @@ trace_callback 签名:
   )
 """
 
+import logging
 import time
 from typing import AsyncGenerator, Callable, Dict, Optional
 
 from llm.config import LLMConfig
 from llm.service import LLMService
+
+logger = logging.getLogger(__name__)
 
 
 class AgentLLM:
@@ -45,38 +48,58 @@ class AgentLLM:
         return m
 
     async def chat(self, content: str) -> str:
+        tag = f"[{self.llm_type}/{self.step_name}]"
+        logger.info(f"{tag} chat prompt ({len(content)}ch): {content[:600]}")
         msgs = self._msgs(content)
         t0 = time.perf_counter()
         err, result = None, {"content": "", "reasoning_content": ""}
         try:
             result = await self._svc.complete_full(msgs, self.config)
         except Exception as e:
-            err = str(e); raise
+            err = str(e)
+            logger.warning(f"{tag} chat 失败: {e}")
+            raise
         finally:
             elapsed = (time.perf_counter() - t0) * 1000
             await self._record_trace(msgs, result["content"], result["reasoning_content"],
                                       elapsed, err is None, err or "")
+        logger.info(f"{tag} chat 结果 ({len(result['content'])}ch): {result['content'][:400]}")
         self.history.extend([{"role": "user", "content": content}, {"role": "assistant", "content": result["content"]}])
         return result["content"]
 
     async def chat_json(self, content: str) -> dict:
-        """非流式 JSON。内部走 complete_full → _parse_json，保留 reasoning。"""
+        """非流式 JSON。内部走 complete_full → _parse_json，保留 reasoning。
+        若 content 为空但 reasoning_content 非空，自动从 reasoning 中提取（qwen3 think 模式降级）。
+        """
+        tag = f"[{self.llm_type}/{self.step_name}]"
+        logger.info(f"{tag} chat_json prompt ({len(content)}ch): {content[:600]}")
         msgs = self._msgs(content)
         t0 = time.perf_counter()
-        err, reasoning_text = None, ""
+        err, reasoning_text, resp_str = None, "", ""
         try:
-            # 先拿完整响应（含 reasoning）
             full = await self._svc.complete_full(msgs, self.config)
             reasoning_text = full["reasoning_content"]
-            # 解析 JSON
-            r = self._svc._parse_json(full["content"])
+            raw_content = full["content"]
+
+            # qwen3 think 模式：content 为空时降级到 reasoning_content
+            if not raw_content.strip() and reasoning_text.strip():
+                logger.warning(
+                    f"{tag} content 为空（reasoning={len(reasoning_text)}ch），"
+                    f"降级从 reasoning 提取 JSON"
+                )
+                raw_content = reasoning_text
+
+            r = self._svc._parse_json(raw_content)
             resp_str = str(r)
         except Exception as e:
-            err = str(e); resp_str = ""; raise
+            err = str(e)
+            logger.warning(f"{tag} chat_json 失败: {e}")
+            raise
         finally:
             elapsed = (time.perf_counter() - t0) * 1000
             await self._record_trace(msgs, resp_str, reasoning_text,
                                       elapsed, err is None, err or "")
+        logger.info(f"{tag} chat_json 结果: {resp_str[:400]}")
         self.history.extend([{"role": "user", "content": content}, {"role": "assistant", "content": resp_str}])
         return r
 
