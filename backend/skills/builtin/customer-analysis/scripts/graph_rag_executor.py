@@ -86,19 +86,19 @@ class GraphRAGExecutor:
         if not subtree: yield _ts("subtree_fetch","done","子树为空"); yield SkillResult(False,"子树为空"); return
         yield _ts("subtree_fetch","done","子树获取完成")
 
-        # Step 6.5: 条件裁剪（如果用户带了 filter_conditions）
-        fc = ctx.params.get("filter_conditions")
-        if fc and isinstance(fc, dict):
-            focus_dims = fc.get("focus_dimensions", [])
-            focus_items = fc.get("focus_items", [])
-            exclude = fc.get("exclude", [])
-            if focus_dims or focus_items or exclude:
-                yield _ts("condition_filter","running","正在根据条件裁剪大纲...")
-                trace.start_timer("s6_5")
-                subtree = await self._filter_subtree(subtree, focus_dims, focus_items, exclude, trace_callback=ctx.trace_callback)
-                trace.log_timed("s6_5","s6_5")
+        # Step 6.5: 基于查询意图自动过滤子树
+        # 当子树有足够的子章节时，用 LLM 判断用户是否只需要其中特定部分
+        if self._subtree_has_multiple_sections(subtree):
+            yield _ts("query_filter", "running", "正在分析查询意图，检查是否需要章节过滤...")
+            trace.start_timer("s6_5")
+            filtered, was_filtered = await self._auto_filter_by_query(query, subtree, ctx.trace_callback)
+            trace.log_timed("s6_5", "s6_5")
+            if was_filtered:
+                subtree = filtered
                 remaining = self._count_children(subtree)
-                yield _ts("condition_filter","done",f"裁剪完成，保留 {remaining} 个节点")
+                yield _ts("query_filter", "done", f"已按查询意图过滤，保留 {remaining} 个节点")
+            else:
+                yield _ts("query_filter", "done", "查询覆盖完整子树，无需过滤")
 
         # Step 6.8: 合并 paragraph 到 L5 节点
         self.merge_paragraph(subtree, skill_dir="")
@@ -141,65 +141,125 @@ class GraphRAGExecutor:
         except:
             f=nodes[0]; return {"selected_id":f["id"],"selected_name":f["name"],"selected_path":f["path"],"level":f["level"],"reason":"fallback"}
 
-    async def _filter_subtree(self, subtree: dict, focus_dims: list, focus_items: list, exclude: list, trace_callback=None) -> dict:
+    @staticmethod
+    def _subtree_has_multiple_sections(subtree: dict, min_sections: int = 2) -> bool:
+        """判断子树的直接子章节数量是否超过阈值，不足则无需过滤。"""
+        top_children = [c for c in subtree.get("children", []) if c.get("level", 0) <= 4]
+        return len(top_children) >= min_sections
+
+    @staticmethod
+    def _collect_section_names(subtree: dict) -> list[str]:
+        """收集子树中 L3/L4 层的章节名，供 LLM 判断。"""
+        names = []
+        def _walk(node, depth=0):
+            level = node.get("level", 0)
+            if depth > 0 and level in (3, 4) and node.get("name"):
+                names.append(f'- {node["name"]} (L{level})')
+            if depth < 3:
+                for c in node.get("children", []):
+                    _walk(c, depth + 1)
+        _walk(subtree)
+        return names
+
+    async def _auto_filter_by_query(self, query: str, subtree: dict, trace_callback=None) -> tuple[dict, bool]:
+        """根据用户查询自动判断是否需要过滤子树，返回 (subtree, was_filtered)。
+
+        当用户的查询暗示只需要子树的特定部分时（如"只要覆盖分析"、"只看容量"），
+        用 LLM 识别这个意图并自动裁掉不相关章节。
+        若查询意图覆盖整个子树，或 LLM 判断无需过滤，原样返回。
         """
-        用 LLM 判断子树中每个节点是否与条件相关，剪掉不相关的分支。
-        只对 L3（评估维度）和 L4（评估项）层级做裁剪，L1/L2 保留，L5 跟随父节点。
-        """
-        FILTER_PROMPT = """你是大纲裁剪专家。根据用户条件判断哪些节点应该保留。
+        FILTER_PROMPT = """\
+你是大纲裁剪专家。判断用户查询是否只需要大纲中的特定章节，并给出裁剪决策。
 
-## 用户条件
-关注的维度: {focus_dims}
-关注的评估项: {focus_items}
-排除: {exclude}
+## 用户查询
+{query}
 
-## 待判断的节点列表
-{nodes_text}
+## 大纲现有章节
+{sections}
 
-## 规则
-- 如果用户指定了关注维度，只保留相关的 L3 节点及其子节点
-- 如果用户指定了关注评估项，只保留相关的 L4 节点
-- 排除列表中的节点直接剪掉
-- 判断"相关"时要考虑语义相似性，不要求完全匹配
+## 判断规则
+- 若查询中包含明确的章节限定词（如"只要XX"/"只看XX"/"XX部分"），则 filter_needed=true，keep 填写要保留的章节名
+- 若查询是泛化需求（如"分析fgOTN部署"），则 filter_needed=false，不裁剪
+- 判断相关性时允许语义模糊匹配（"覆盖分析"≈"覆盖率分析"≈"网络覆盖"）
+- keep 列表填写原始章节名，不要改写
 
-## 输出要求
-用 ```json ``` 代码块包裹输出，不要加解释文字。格式:
+## 输出格式
+用 ```json ``` 代码块包裹，格式：
 ```json
-{{"keep": ["节点名1", "节点名2"], "remove": ["节点名3"]}}
+{{"filter_needed": true, "keep": ["章节名A", "章节名B"], "reason": "用户指定了只看覆盖分析"}}
+```
+或
+```json
+{{"filter_needed": false, "keep": [], "reason": "查询未限定章节范围"}}
 ```"""
 
-        # 收集 L3/L4 节点名
-        l3_l4_names = []
-        for child in subtree.get("children", []):
-            if child.get("level") in (3, 4):
-                l3_l4_names.append(f'- {child["name"]} (L{child["level"]})')
-            for grandchild in child.get("children", []):
-                if grandchild.get("level") in (3, 4):
-                    l3_l4_names.append(f'- {grandchild["name"]} (L{grandchild["level"]})')
-
-        if not l3_l4_names:
-            return subtree
+        section_names = self._collect_section_names(subtree)
+        if not section_names:
+            return subtree, False
 
         prompt = FILTER_PROMPT.format(
-            focus_dims=", ".join(focus_dims) if focus_dims else "无特定要求",
-            focus_items=", ".join(focus_items) if focus_items else "无特定要求",
-            exclude=", ".join(exclude) if exclude else "无",
-            nodes_text="\n".join(l3_l4_names),
+            query=query,
+            sections="\n".join(section_names),
         )
 
         try:
             from llm.config import LLMConfig
-            fa = AgentLLM(self._llm, "", LLMConfig(temperature=0.1, max_tokens=512, response_format="json"),
-                         trace_callback=trace_callback, llm_type="filter", step_name="condition_filter")
-            result = await fa.chat_json(prompt)
-            remove_set = set(result.get("remove", []))
-            if remove_set:
-                subtree = self._prune_tree(subtree, remove_set)
-                logger.info(f"条件裁剪: 移除 {len(remove_set)} 个节点")
-        except Exception as e:
-            logger.warning(f"条件裁剪 LLM 失败，保留完整子树: {e}")
+            agent = AgentLLM(
+                self._llm, "",
+                LLMConfig(temperature=0.1, max_tokens=512),
+                trace_callback=trace_callback,
+                llm_type="query_filter",
+                step_name="auto_filter",
+            )
+            result = await agent.chat_json(prompt)
 
-        return subtree
+            if not result.get("filter_needed"):
+                logger.info(f"auto_filter: 无需过滤，reason={result.get('reason', '')!r}")
+                return subtree, False
+
+            keep_names = set(result.get("keep", []))
+            if not keep_names:
+                logger.warning("auto_filter: filter_needed=true 但 keep 为空，跳过过滤")
+                return subtree, False
+
+            logger.info(f"auto_filter: 保留章节={keep_names}, reason={result.get('reason', '')!r}")
+            filtered = self._keep_sections(subtree, keep_names)
+            return filtered, True
+
+        except Exception as e:
+            logger.warning(f"auto_filter LLM 失败，保留完整子树: {e}")
+            return subtree, False
+
+    @staticmethod
+    def _keep_sections(node: dict, keep_names: set) -> dict:
+        """只保留 keep_names 中指定的章节及其子树，其余剪掉。
+        L1/L2 锚点节点始终保留，L5 跟随父节点。
+        """
+        import copy
+        node = copy.deepcopy(node)
+
+        def _prune(n: dict) -> dict | None:
+            level = n.get("level", 0)
+            name = n.get("name", "")
+            # L1/L2 锚点：始终保留，递归处理子节点
+            if level <= 2:
+                n["children"] = [c for c in (_prune(c) for c in n.get("children", [])) if c is not None]
+                return n
+            # L5 叶节点：跟随父节点，由父级决定是否保留（不在此处判断）
+            if level == 5:
+                return n
+            # L3/L4：检查自身或其子孙是否在保留列表中
+            if name in keep_names:
+                return n
+            # 递归检查子树，若后代有需要保留的节点则保留当前节点
+            pruned_children = [c for c in (_prune(c) for c in n.get("children", [])) if c is not None]
+            if pruned_children:
+                n["children"] = pruned_children
+                return n
+            return None
+
+        result = _prune(node)
+        return result if result is not None else node
 
     @staticmethod
     def _prune_tree(node: dict, remove_names: set) -> dict:
