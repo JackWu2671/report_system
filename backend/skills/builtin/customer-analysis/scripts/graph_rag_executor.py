@@ -86,17 +86,15 @@ class GraphRAGExecutor:
         if not subtree: yield _ts("subtree_fetch","done","子树为空"); yield SkillResult(False,"子树为空"); return
         yield _ts("subtree_fetch","done","子树获取完成")
 
-        # Step 6.5: 基于查询意图自动过滤子树
-        # 当子树有足够的子章节时，用 LLM 判断用户是否只需要其中特定部分
-        if self._subtree_has_multiple_sections(subtree):
+        # Step 6.5: 基于查询意图自动裁剪（与 clip_outline 工具相同的结构化操作模式）
+        top_sections = [c for c in subtree.get("children", []) if c.get("level", 0) <= 4]
+        if len(top_sections) >= 2:
             yield _ts("query_filter", "running", "正在分析查询意图，检查是否需要章节过滤...")
             trace.start_timer("s6_5")
-            filtered, was_filtered = await self._auto_filter_by_query(query, subtree, ctx.trace_callback)
+            subtree, was_filtered = await self._clip_by_query(query, subtree, ctx.trace_callback)
             trace.log_timed("s6_5", "s6_5")
             if was_filtered:
-                subtree = filtered
-                remaining = self._count_children(subtree)
-                yield _ts("query_filter", "done", f"已按查询意图过滤，保留 {remaining} 个节点")
+                yield _ts("query_filter", "done", f"已按查询意图过滤，保留 {self._count_children(subtree)} 个节点")
             else:
                 yield _ts("query_filter", "done", "查询覆盖完整子树，无需过滤")
 
@@ -141,141 +139,121 @@ class GraphRAGExecutor:
         except:
             f=nodes[0]; return {"selected_id":f["id"],"selected_name":f["name"],"selected_path":f["path"],"level":f["level"],"reason":"fallback"}
 
-    @staticmethod
-    def _subtree_has_multiple_sections(subtree: dict, min_sections: int = 2) -> bool:
-        """判断子树的直接子章节数量是否超过阈值，不足则无需过滤。"""
-        top_children = [c for c in subtree.get("children", []) if c.get("level", 0) <= 4]
-        return len(top_children) >= min_sections
+    # ─── Step 6.5 辅助：与 OutlineClipExecutor 共用相同的操作模式 ─────────────
 
-    @staticmethod
-    def _collect_section_names(subtree: dict) -> list[str]:
-        """收集子树中 L3/L4 层的章节名，供 LLM 判断。"""
-        names = []
-        def _walk(node, depth=0):
-            level = node.get("level", 0)
-            if depth > 0 and level in (3, 4) and node.get("name"):
-                names.append(f'- {node["name"]} (L{level})')
-            if depth < 3:
-                for c in node.get("children", []):
-                    _walk(c, depth + 1)
-        _walk(subtree)
-        return names
-
-    async def _auto_filter_by_query(self, query: str, subtree: dict, trace_callback=None) -> tuple[dict, bool]:
-        """根据用户查询自动判断是否需要过滤子树，返回 (subtree, was_filtered)。
-
-        当用户的查询暗示只需要子树的特定部分时（如"只要覆盖分析"、"只看容量"），
-        用 LLM 识别这个意图并自动裁掉不相关章节。
-        若查询意图覆盖整个子树，或 LLM 判断无需过滤，原样返回。
-        """
-        FILTER_PROMPT = """\
-你是大纲裁剪专家。判断用户查询是否只需要大纲中的特定章节，并给出裁剪决策。
+    QUERY_CLIP_PROMPT = """\
+你是大纲裁剪专家。根据用户查询判断是否需要裁剪大纲，若需要则生成裁剪操作列表。
 
 ## 用户查询
 {query}
 
-## 大纲现有章节
-{sections}
+## 当前大纲节点
+{nodes_text}
 
 ## 判断规则
-- 若查询中包含明确的章节限定词（如"只要XX"/"只看XX"/"XX部分"），则 filter_needed=true，keep 填写要保留的章节名
-- 若查询是泛化需求（如"分析fgOTN部署"），则 filter_needed=false，不裁剪
-- 判断相关性时允许语义模糊匹配（"覆盖分析"≈"覆盖率分析"≈"网络覆盖"）
-- keep 列表填写原始章节名，不要改写
+- 若查询是泛化需求（如"分析fgOTN部署"、"帮我看传送网"），输出 {{"instructions": []}}，不裁剪
+- 若查询含明确章节限定词（如"只要覆盖分析"/"只看容量"/"不看低阶交叉"），生成对应操作
+- 不处理参数/阈值类约束（如"只看金融行业"/"阈值改为80%"），这类由 inject_params 工具处理
+- 允许语义模糊匹配（"覆盖分析"≈"覆盖率分析"≈"网络覆盖"）
 
 ## 输出格式
 用 ```json ``` 代码块包裹，格式：
 ```json
-{{"filter_needed": true, "keep": ["章节名A", "章节名B"], "reason": "用户指定了只看覆盖分析"}}
+{{"instructions": [
+    {{"type": "delete_node", "target_name": "节点名"}},
+    {{"type": "keep_only", "target_names": ["节点名1", "节点名2"]}}
+]}}
 ```
-或
-```json
-{{"filter_needed": false, "keep": [], "reason": "查询未限定章节范围"}}
-```"""
+无需裁剪时输出：{{"instructions": []}}"""
 
-        section_names = self._collect_section_names(subtree)
-        if not section_names:
-            return subtree, False
+    async def _clip_by_query(self, query: str, subtree: dict, trace_callback=None) -> tuple[dict, bool]:
+        """根据用户查询自动裁剪子树，返回 (subtree, was_filtered)。
+        使用与 OutlineClipExecutor 相同的结构化操作格式。
+        """
+        import copy
+        from llm.config import LLMConfig
 
-        prompt = FILTER_PROMPT.format(
-            query=query,
-            sections="\n".join(section_names),
-        )
+        nodes_text = self._collect_nodes_text(subtree)
+        prompt = self.QUERY_CLIP_PROMPT.format(query=query, nodes_text=nodes_text)
 
         try:
-            from llm.config import LLMConfig
             agent = AgentLLM(
                 self._llm, "",
                 LLMConfig(temperature=0.1, max_tokens=512),
                 trace_callback=trace_callback,
                 llm_type="query_filter",
-                step_name="auto_filter",
+                step_name="clip_by_query",
             )
             result = await agent.chat_json(prompt)
-
-            if not result.get("filter_needed"):
-                logger.info(f"auto_filter: 无需过滤，reason={result.get('reason', '')!r}")
-                return subtree, False
-
-            keep_names = set(result.get("keep", []))
-            if not keep_names:
-                logger.warning("auto_filter: filter_needed=true 但 keep 为空，跳过过滤")
-                return subtree, False
-
-            logger.info(f"auto_filter: 保留章节={keep_names}, reason={result.get('reason', '')!r}")
-            filtered = self._keep_sections(subtree, keep_names)
-            return filtered, True
-
+            instructions = result.get("instructions", [])
         except Exception as e:
-            logger.warning(f"auto_filter LLM 失败，保留完整子树: {e}")
+            logger.warning(f"clip_by_query LLM 失败，保留完整子树: {e}")
             return subtree, False
 
-    @staticmethod
-    def _keep_sections(node: dict, keep_names: set) -> dict:
-        """只保留 keep_names 中指定的章节及其子树，其余剪掉。
-        L1/L2 锚点节点始终保留，L5 跟随父节点。
-        """
-        import copy
-        node = copy.deepcopy(node)
+        if not instructions:
+            return subtree, False
 
-        def _prune(n: dict) -> dict | None:
-            level = n.get("level", 0)
-            name = n.get("name", "")
-            # L1/L2 锚点：始终保留，递归处理子节点
-            if level <= 2:
-                n["children"] = [c for c in (_prune(c) for c in n.get("children", [])) if c is not None]
-                return n
-            # L5 叶节点：跟随父节点，由父级决定是否保留（不在此处判断）
-            if level == 5:
-                return n
-            # L3/L4：检查自身或其子孙是否在保留列表中
-            if name in keep_names:
-                return n
-            # 递归检查子树，若后代有需要保留的节点则保留当前节点
-            pruned_children = [c for c in (_prune(c) for c in n.get("children", [])) if c is not None]
-            if pruned_children:
-                n["children"] = pruned_children
-                return n
-            return None
+        node = copy.deepcopy(subtree)
+        changed = False
+        for inst in instructions:
+            t = inst.get("type")
+            if t == "delete_node":
+                target = inst.get("target_name", "")
+                if target:
+                    node = self._delete_node(node, target)
+                    changed = True
+            elif t == "keep_only":
+                targets = inst.get("target_names", [])
+                if targets:
+                    node = self._keep_only(node, set(targets))
+                    changed = True
 
-        result = _prune(node)
-        return result if result is not None else node
+        logger.info(f"clip_by_query: {len(instructions)} 条操作，changed={changed}")
+        return node, changed
 
     @staticmethod
-    def _prune_tree(node: dict, remove_names: set) -> dict:
-        """递归剪掉 remove_names 中的节点。"""
+    def _collect_nodes_text(node, depth=0) -> str:
+        """收集大纲节点文本，供 LLM 理解结构（与 OutlineClipExecutor 相同逻辑）。"""
+        lines = []
+        name = node.get("name", "")
+        level = node.get("level", 0)
+        if name and level != 5:
+            lines.append(f"{'  ' * depth}- {name} (L{level})")
+        if depth < 3:
+            for child in node.get("children", []):
+                lines.append(GraphRAGExecutor._collect_nodes_text(child, depth + 1))
+        return "\n".join(lines)
+
+    @staticmethod
+    def _delete_node(node: dict, target_name: str) -> dict:
         if not node.get("children"):
             return node
         node["children"] = [
-            GraphRAGExecutor._prune_tree(c, remove_names)
+            GraphRAGExecutor._delete_node(c, target_name)
             for c in node["children"]
-            if c.get("name") not in remove_names
+            if c.get("name") != target_name
         ]
         return node
 
     @staticmethod
+    def _keep_only(node: dict, target_names: set) -> dict:
+        if not node.get("children"):
+            return node
+        node["children"] = [
+            GraphRAGExecutor._keep_only(c, target_names)
+            for c in node["children"]
+            if c.get("name") in target_names or GraphRAGExecutor._has_descendant(c, target_names)
+        ]
+        return node
+
+    @staticmethod
+    def _has_descendant(node: dict, names: set) -> bool:
+        if node.get("name") in names:
+            return True
+        return any(GraphRAGExecutor._has_descendant(c, names) for c in node.get("children", []))
+
+    @staticmethod
     def _count_children(node: dict) -> int:
-        """统计子树节点总数。"""
         count = 1
         for c in node.get("children", []):
             count += GraphRAGExecutor._count_children(c)
