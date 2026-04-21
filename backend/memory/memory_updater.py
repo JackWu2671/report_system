@@ -7,8 +7,8 @@ import asyncio
 import json
 import logging
 
-from agent.memory.memory_queue import MemoryQueue
-from agent.memory.memory_store import MemoryStore
+from memory.memory_queue import MemoryQueue
+from memory.memory_store import MemoryStore
 
 logger = logging.getLogger(__name__)
 

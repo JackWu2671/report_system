@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from agent.context import SkillResult
-from agent.tool_registry import ToolContext
+from tools.tool_registry import ToolContext
 
 
 # ─── FakeLLMService ───────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ import os
 from typing import AsyncGenerator
 
 from agent.context import SkillResult
-from agent.tool_registry import ToolContext
+from tools.tool_registry import ToolContext
 
 logger = logging.getLogger(__name__)
 

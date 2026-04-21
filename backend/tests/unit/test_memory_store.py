@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from agent.memory.memory_store import MemoryStore, _EMPTY_MEMORY, _MAX_FACTS, _MIN_CONFIDENCE
+from memory.memory_store import MemoryStore, _EMPTY_MEMORY, _MAX_FACTS, _MIN_CONFIDENCE
 
 
 def make_store(tmp_path) -> MemoryStore:

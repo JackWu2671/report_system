@@ -3,8 +3,8 @@ import logging
 from typing import AsyncGenerator
 
 from agent.context import SkillContext, SkillResult
-from agent.tool_registry import ToolContext
-from agent.tools._helpers import query_matches_anchor
+from tools.tool_registry import ToolContext
+from tools._helpers import query_matches_anchor
 
 logger = logging.getLogger(__name__)
 

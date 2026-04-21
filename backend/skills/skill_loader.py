@@ -14,8 +14,8 @@ import os
 import sys
 from typing import Any, Optional
 
-from agent.skill_registry import SkillRegistry, SkillMeta
-from agent.service_container import ServiceContainer
+from skills.skill_registry import SkillRegistry, SkillMeta
+from skills.service_container import ServiceContainer
 
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,5 @@
-from agent.tool_registry import ToolRegistry
-from agent.tools import (
+from tools.tool_registry import ToolRegistry
+from tools import (
     clip_outline,
     get_current_outline,
     get_session_status,

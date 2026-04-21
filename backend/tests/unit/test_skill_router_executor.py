@@ -1,74 +1,60 @@
-"""SkillRouterExecutor 单元测试。
+"""TemplateRouterExecutor 单元测试。
 
 验证：
-  1. _llm_select_skills 正确解析新格式（带 description 的 dict 列表）
-  2. _llm_select_skills 兼容旧格式（纯字符串 skill_id 列表）
+  1. _llm_select_templates 正确解析新格式（带 description 的 dict 列表）
+  2. _llm_select_templates 兼容旧格式（纯字符串 template_id 列表）
   3. execute() 生成的 candidate 包含 description 字段
   4. 单候选和多候选场景下 description 均正确透传
 """
 
-import importlib.util
 import json
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from agent.context import SkillContext, SkillResult
-
-# skill-router 目录含连字符，无法用常规 import，用 importlib 动态加载
-_spec = importlib.util.spec_from_file_location(
-    "skill_router_executor",
-    "skills/builtin/skill-router/scripts/skill_router_executor.py",
-)
-_mod = importlib.util.module_from_spec(_spec)
-sys.modules[_spec.name] = _mod
-_spec.loader.exec_module(_mod)
-SkillRouterExecutor = _mod.SkillRouterExecutor
+from tools.executors.template_router_executor import TemplateRouterExecutor
 
 
 # ─── 辅助 ──────────────────────────────────────────────────────────────────────
 
-def _make_executor(llm_service=None) -> SkillRouterExecutor:
-    return SkillRouterExecutor(
+def _make_executor(llm_service=None) -> TemplateRouterExecutor:
+    return TemplateRouterExecutor(
         llm_service=llm_service or MagicMock(),
-        skill_registry=MagicMock(),
         session_service=MagicMock(),
     )
 
 
 SAMPLE_META_A = {
-    "skill_id": "fgotn-deploy-a",
-    "skill_dir": "skills/custom/fgotn-deploy-a",
+    "template_id": "fgotn-deploy-a",
+    "template_dir": "templates/fgotn-deploy-a",
     "display_name": "细颗粒板卡部署分析",
     "scene_intro": "分析细颗粒板卡部署，结合商业与网络洞察",
     "keywords": ["fgOTN", "细颗粒", "时延"],
     "query_variants": ["fgOTN部署"],
-    "logic_summary": "评估细颗粒板卡部署机会",
 }
 
 SAMPLE_META_B = {
-    "skill_id": "fgotn-deploy-b",
-    "skill_dir": "skills/custom/fgotn-deploy-b",
+    "template_id": "fgotn-deploy-b",
+    "template_dir": "templates/fgotn-deploy-b",
     "display_name": "OTN站点价值覆盖评估",
     "scene_intro": "基于价值企业覆盖评估OTN站点",
     "keywords": ["fgOTN", "价值覆盖", "站点排序"],
     "query_variants": ["OTN站点评估"],
-    "logic_summary": "基于价值企业覆盖评估",
 }
 
 
-# ─── _llm_select_skills 新格式解析 ────────────────────────────────────────────
+# ─── _llm_select_templates 新格式解析 ─────────────────────────────────────────
 
-class TestLLMSelectSkillsNewFormat:
+class TestLLMSelectTemplatesNewFormat:
 
     @pytest.mark.asyncio
     async def test_parse_new_format_with_description(self):
-        """LLM 返回新格式 [{"skill_id": ..., "description": ...}] 时正确解析。"""
+        """LLM 返回新格式 [{"template_id": ..., "description": ...}] 时正确解析。"""
         llm_response = {
             "matches": [
-                {"skill_id": "fgotn-deploy-a", "description": "侧重商业与网络时延综合评估"},
-                {"skill_id": "fgotn-deploy-b", "description": "侧重价值企业覆盖与站点排序"},
+                {"template_id": "fgotn-deploy-a", "description": "侧重商业与网络时延综合评估"},
+                {"template_id": "fgotn-deploy-b", "description": "侧重价值企业覆盖与站点排序"},
             ]
         }
 
@@ -77,18 +63,18 @@ class TestLLMSelectSkillsNewFormat:
             instance = MockAgent.return_value
             instance.chat_json = AsyncMock(return_value=llm_response)
 
-            result = await executor._llm_select_skills("fgOTN部署", [SAMPLE_META_A, SAMPLE_META_B])
+            result = await executor._llm_select_templates("fgOTN部署", [SAMPLE_META_A, SAMPLE_META_B])
 
         assert len(result) == 2
-        assert result[0] == {"skill_id": "fgotn-deploy-a", "description": "侧重商业与网络时延综合评估"}
-        assert result[1] == {"skill_id": "fgotn-deploy-b", "description": "侧重价值企业覆盖与站点排序"}
+        assert result[0] == {"template_id": "fgotn-deploy-a", "description": "侧重商业与网络时延综合评估"}
+        assert result[1] == {"template_id": "fgotn-deploy-b", "description": "侧重价值企业覆盖与站点排序"}
 
     @pytest.mark.asyncio
     async def test_parse_new_format_missing_description(self):
         """LLM 返回新格式但 description 缺失时，默认为空字符串。"""
         llm_response = {
             "matches": [
-                {"skill_id": "fgotn-deploy-a"},
+                {"template_id": "fgotn-deploy-a"},
             ]
         }
 
@@ -97,19 +83,19 @@ class TestLLMSelectSkillsNewFormat:
             instance = MockAgent.return_value
             instance.chat_json = AsyncMock(return_value=llm_response)
 
-            result = await executor._llm_select_skills("fgOTN部署", [SAMPLE_META_A])
+            result = await executor._llm_select_templates("fgOTN部署", [SAMPLE_META_A])
 
         assert len(result) == 1
-        assert result[0] == {"skill_id": "fgotn-deploy-a", "description": ""}
+        assert result[0] == {"template_id": "fgotn-deploy-a", "description": ""}
 
 
-# ─── _llm_select_skills 旧格式兼容 ───────────────────────────────────────────
+# ─── _llm_select_templates 旧格式兼容 ─────────────────────────────────────────
 
-class TestLLMSelectSkillsOldFormat:
+class TestLLMSelectTemplatesOldFormat:
 
     @pytest.mark.asyncio
     async def test_compat_old_string_format(self):
-        """LLM 返回旧格式 ["skill_id1", "skill_id2"] 时自动转为新格式。"""
+        """LLM 返回旧格式 ["template_id1", "template_id2"] 时自动转为新格式。"""
         llm_response = {
             "matches": ["fgotn-deploy-a", "fgotn-deploy-b"]
         }
@@ -119,11 +105,11 @@ class TestLLMSelectSkillsOldFormat:
             instance = MockAgent.return_value
             instance.chat_json = AsyncMock(return_value=llm_response)
 
-            result = await executor._llm_select_skills("fgOTN部署", [SAMPLE_META_A, SAMPLE_META_B])
+            result = await executor._llm_select_templates("fgOTN部署", [SAMPLE_META_A, SAMPLE_META_B])
 
         assert len(result) == 2
-        assert result[0] == {"skill_id": "fgotn-deploy-a", "description": ""}
-        assert result[1] == {"skill_id": "fgotn-deploy-b", "description": ""}
+        assert result[0] == {"template_id": "fgotn-deploy-a", "description": ""}
+        assert result[1] == {"template_id": "fgotn-deploy-b", "description": ""}
 
     @pytest.mark.asyncio
     async def test_compat_empty_matches(self):
@@ -135,7 +121,7 @@ class TestLLMSelectSkillsOldFormat:
             instance = MockAgent.return_value
             instance.chat_json = AsyncMock(return_value=llm_response)
 
-            result = await executor._llm_select_skills("无关查询", [SAMPLE_META_A])
+            result = await executor._llm_select_templates("无关查询", [SAMPLE_META_A])
 
         assert result == []
 
@@ -146,21 +132,19 @@ class TestExecuteCandidateDescription:
 
     @pytest.mark.asyncio
     async def test_candidates_include_description(self):
-        """execute() 生成的 skill_candidates 事件中每个候选包含 description 字段。"""
+        """execute() 生成的 skill_candidates 事件中每个候选包含 description 和 skill_id 字段。"""
         executor = _make_executor()
         executor._ss = MagicMock()
         executor._ss.set_skill_candidates = AsyncMock()
 
-        # mock _llm_select_skills 返回带 description 的结果
-        executor._llm_select_skills = AsyncMock(return_value=[
-            {"skill_id": "fgotn-deploy-a", "description": "侧重商业评估"},
-            {"skill_id": "fgotn-deploy-b", "description": "侧重站点排序"},
+        executor._llm_select_templates = AsyncMock(return_value=[
+            {"template_id": "fgotn-deploy-a", "description": "侧重商业评估"},
+            {"template_id": "fgotn-deploy-b", "description": "侧重站点排序"},
         ])
 
-        # mock _load_skill_meta_full 通过 patch os 扫描
         with patch("os.path.isdir", return_value=True), \
              patch("os.listdir", return_value=["fgotn-deploy-a", "fgotn-deploy-b"]), \
-             patch.object(SkillRouterExecutor, "_load_skill_meta_full",
+             patch.object(TemplateRouterExecutor, "_load_template_meta",
                           side_effect=[SAMPLE_META_A, SAMPLE_META_B]):
 
             ctx = SkillContext(
@@ -176,7 +160,6 @@ class TestExecuteCandidateDescription:
                 else:
                     events.append(("sse", item))
 
-        # 找到 skill_candidates 事件
         cand_events = []
         for tag, val in events:
             if tag == "sse":
@@ -193,6 +176,7 @@ class TestExecuteCandidateDescription:
 
         assert candidates[0]["label"] == "A"
         assert candidates[0]["skill_id"] == "fgotn-deploy-a"
+        assert candidates[0]["template_id"] == "fgotn-deploy-a"
         assert candidates[0]["description"] == "侧重商业评估"
 
         assert candidates[1]["label"] == "B"
@@ -201,18 +185,18 @@ class TestExecuteCandidateDescription:
 
     @pytest.mark.asyncio
     async def test_candidate_description_empty_when_old_format(self):
-        """当 _llm_select_skills 返回旧格式（description 为空）时，candidate 的 description 为空字符串。"""
+        """当 _llm_select_templates 返回 description 为空时，candidate 的 description 为空字符串。"""
         executor = _make_executor()
         executor._ss = MagicMock()
         executor._ss.set_skill_candidates = AsyncMock()
 
-        executor._llm_select_skills = AsyncMock(return_value=[
-            {"skill_id": "fgotn-deploy-a", "description": ""},
+        executor._llm_select_templates = AsyncMock(return_value=[
+            {"template_id": "fgotn-deploy-a", "description": ""},
         ])
 
         with patch("os.path.isdir", return_value=True), \
              patch("os.listdir", return_value=["fgotn-deploy-a"]), \
-             patch.object(SkillRouterExecutor, "_load_skill_meta_full",
+             patch.object(TemplateRouterExecutor, "_load_template_meta",
                           side_effect=[SAMPLE_META_A]):
 
             ctx = SkillContext(
