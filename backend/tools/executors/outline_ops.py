@@ -44,7 +44,13 @@ def delete_node(node: dict, target_name: str) -> dict:
 
 
 def keep_only(node: dict, target_names: Set[str]) -> dict:
-    """仅保留 target_names 中的节点及其祖先/后代路径。"""
+    """仅保留 target_names 中的节点及其祖先/后代路径。
+
+    当节点自身在 target_names 中时，保留其完整子树，不做裁剪。
+    这避免了"根节点即目标"时子节点被误删的问题。
+    """
+    if node.get("name") in target_names:
+        return node
     if not node.get("children"):
         return node
     node["children"] = [
