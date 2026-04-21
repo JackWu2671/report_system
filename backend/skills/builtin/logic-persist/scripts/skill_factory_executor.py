@@ -61,7 +61,7 @@ class SkillFactoryExecutor:
             json.dumps(fc.to_cache_dict(), ensure_ascii=False)
         )
         yield sse_event("persist_prompt", {
-            "message": "大纲模板已设计完成，是否保存为可复用模板？请回复"保存"或"不保存"。",
+            "message": "大纲模板已设计完成，是否保存为可复用模板？请回复「保存」或「不保存」。",
             "context_key": cache_key,
         })
         yield SkillResult(True, "大纲模板已设计完成",

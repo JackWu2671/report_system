@@ -23,7 +23,7 @@ import pytest
 
 from agent.context import SkillResult
 from agent.react_engine import SimpleReActEngine
-from agent.tool_registry import ToolContext, ToolRegistry
+from tools.tool_registry import ToolContext, ToolRegistry
 from tests.conftest import FakeLLMService
 
 SHORT_NETWORK_QUESTION = "分析fgOTN容量"

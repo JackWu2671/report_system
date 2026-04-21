@@ -9,7 +9,7 @@ import pytest
 
 from agent.context import SkillResult
 from agent.react_engine import MAX_STEPS, SimpleReActEngine
-from agent.tool_registry import ToolContext, ToolRegistry
+from tools.tool_registry import ToolContext, ToolRegistry
 from tests.conftest import FakeLLMService
 
 

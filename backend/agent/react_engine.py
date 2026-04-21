@@ -25,7 +25,7 @@ from typing import AsyncGenerator, Optional
 
 from agent.context_compressor import compress, should_compress
 from agent.loop_detector import LoopDetector
-from agent.tool_registry import ToolContext, ToolRegistry
+from tools.tool_registry import ToolContext, ToolRegistry
 from config import settings
 from llm.config import LLMConfig, REACT_AGENT_CONFIG
 from llm.service import LLMService

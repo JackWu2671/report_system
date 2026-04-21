@@ -3,7 +3,7 @@
 import pytest
 
 from agent.context import SkillResult
-from agent.tool_registry import ToolContext, ToolRegistry
+from tools.tool_registry import ToolContext, ToolRegistry
 
 
 def _make_ctx() -> ToolContext:
