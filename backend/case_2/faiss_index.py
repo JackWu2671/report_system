@@ -24,9 +24,9 @@ _CASE2_DIR = Path(__file__).parent
 _KB_DIR = _CASE2_DIR / "knowledge_base"
 _NODES_FILE = _KB_DIR / "nodes.json"
 
-# 路径配置从环境变量读取，默认落在 knowledge_base/ 下
-_INDEX_FILE = Path(os.getenv("FAISS_INDEX_PATH", str(_KB_DIR / "index.faiss")))
-_META_FILE  = Path(os.getenv("FAISS_ID_MAP_PATH", str(_KB_DIR / "index.meta.json")))
+_DATA_DIR   = _CASE2_DIR / "data"
+_INDEX_FILE = Path(os.getenv("FAISS_INDEX_PATH",  str(_DATA_DIR / "faiss.index")))
+_META_FILE  = Path(os.getenv("FAISS_ID_MAP_PATH", str(_DATA_DIR / "faiss_id_map.json")))
 
 
 def _node_text(node: dict) -> str:

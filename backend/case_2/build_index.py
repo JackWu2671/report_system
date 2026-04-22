@@ -51,8 +51,9 @@ _KB_DIR = _CASE2_DIR / "knowledge_base"
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "http://localhost:8001/v1")
 EMBEDDING_MODEL    = os.getenv("EMBEDDING_MODEL", "bge-m3")
 EMBEDDING_DIM      = int(os.getenv("EMBEDDING_DIM", "1024"))
-FAISS_INDEX_PATH   = Path(os.getenv("FAISS_INDEX_PATH", str(_KB_DIR / "index.faiss")))
-FAISS_ID_MAP_PATH  = Path(os.getenv("FAISS_ID_MAP_PATH", str(_KB_DIR / "index.meta.json")))
+_DATA_DIR = _CASE2_DIR / "data"
+FAISS_INDEX_PATH  = Path(os.getenv("FAISS_INDEX_PATH",  str(_DATA_DIR / "faiss.index")))
+FAISS_ID_MAP_PATH = Path(os.getenv("FAISS_ID_MAP_PATH", str(_DATA_DIR / "faiss_id_map.json")))
 
 
 def _node_text(node: dict) -> str:
