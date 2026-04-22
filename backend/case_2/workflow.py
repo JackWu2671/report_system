@@ -9,7 +9,8 @@
 import logging
 
 from case_2.kb_store import KBStore
-from case_2.faiss_index import FaissRetriever, ensure_index, get_retriever
+from case_2.embedding_service import EmbeddingService
+from case_2.faiss_index import ensure_index, get_retriever
 from case_2.steps import s1_retrieve, s2_path_recall, s3_anchor, s4_clip_render
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ def _get_kb() -> KBStore:
     return _kb
 
 
-async def run(query: str, llm_fn) -> dict:
+async def run(query: str, llm_fn, embedding_svc: EmbeddingService) -> dict:
     """
     执行完整工作流。
 
@@ -46,8 +47,8 @@ async def run(query: str, llm_fn) -> dict:
     kb = _get_kb()
 
     # 启动时确保 FAISS 索引存在（首次运行会调用 embedding API 构建）
-    await ensure_index(list(kb.nodes.values()))
-    retriever = get_retriever()
+    await ensure_index(list(kb.nodes.values()), embedding_svc)
+    retriever = get_retriever(embedding_svc)
 
     logger.info(f"\n{'='*60}")
     logger.info(f"[workflow] 开始处理: {query!r}")

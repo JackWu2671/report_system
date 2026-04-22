@@ -40,6 +40,10 @@ LLM_API_KEY = os.getenv("LLM_API_KEY", "EMPTY")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen3-235b-a22b")
 LLM_THINK_TAG_MODE = os.getenv("LLM_THINK_TAG_MODE", "none")
 
+EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL") or LLM_BASE_URL
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-m3")
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))
+
 
 async def _call_llm(prompt: str) -> str:
     """轻量 LLM 调用，直接调用 OpenAI-compatible API。"""
@@ -82,8 +86,15 @@ async def main():
 
     query = sys.argv[1]
 
+    from case_2.embedding_service import EmbeddingService
     from case_2.workflow import run
-    result = await run(query, _call_llm)
+
+    embedding_svc = EmbeddingService(
+        base_url=EMBEDDING_BASE_URL,
+        model=EMBEDDING_MODEL,
+        dim=EMBEDDING_DIM,
+    )
+    result = await run(query, _call_llm, embedding_svc)
 
     print("\n" + "=" * 60)
     print("【分析框架大纲】")
