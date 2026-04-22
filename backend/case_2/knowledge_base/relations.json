@@ -1,0 +1,35 @@
+[
+  {"parent": "L1_001", "child": "L2_001", "order": 1},
+  {"parent": "L1_001", "child": "L2_002", "order": 2},
+
+  {"parent": "L2_001", "child": "L3_001", "order": 1},
+  {"parent": "L2_001", "child": "L3_002", "order": 2},
+
+  {"parent": "L2_002", "child": "L3_001", "order": 1},
+
+  {"parent": "L3_001", "child": "L4_001", "order": 1},
+  {"parent": "L3_001", "child": "L4_002", "order": 2},
+
+  {"parent": "L3_002", "child": "L4_003", "order": 1},
+  {"parent": "L3_002", "child": "L4_004", "order": 2},
+  {"parent": "L3_002", "child": "L4_005", "order": 3},
+
+  {"parent": "L4_001", "child": "L5_001", "order": 1},
+  {"parent": "L4_001", "child": "L5_002", "order": 2},
+  {"parent": "L4_001", "child": "L5_003", "order": 3},
+  {"parent": "L4_001", "child": "L5_004", "order": 4},
+
+  {"parent": "L4_002", "child": "L5_005", "order": 1},
+  {"parent": "L4_002", "child": "L5_006", "order": 2},
+  {"parent": "L4_002", "child": "L5_007", "order": 3},
+  {"parent": "L4_002", "child": "L5_008", "order": 4},
+
+  {"parent": "L4_003", "child": "L5_009", "order": 1},
+  {"parent": "L4_003", "child": "L5_010", "order": 2},
+
+  {"parent": "L4_004", "child": "L5_011", "order": 1},
+  {"parent": "L4_004", "child": "L5_012", "order": 2},
+
+  {"parent": "L4_005", "child": "L5_013", "order": 1},
+  {"parent": "L4_005", "child": "L5_014", "order": 2}
+]
