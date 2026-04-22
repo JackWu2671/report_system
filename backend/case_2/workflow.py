@@ -1,17 +1,18 @@
 """case_2 单轮工作流：用户问题 → 分析框架大纲（Markdown）。
 
 4 步流水线：
-  S1  FAISS 向量检索       → 候选节点（Top-K）
-  S2  路径召回             → 从候选节点向上找 L1 根的完整路径
-  S3  LLM 选锚节点         → 确定子树展开起点
-  S4  子树展开+裁剪+渲染   → 动作式裁剪 → Markdown
+  S1  get_nodes（FAISS 向量检索） → 候选节点列表
+  S2  路径召回                    → 从候选节点向上找 L1 根的完整路径
+  S3  LLM 选锚节点                → 确定子树展开起点
+  S4  子树展开 + 裁剪 + 渲染      → 动作式裁剪 → Markdown
 """
 import logging
 
 from case_2.kb_store import KBStore
 from case_2.embedding_service import EmbeddingService
-from case_2.faiss_index import ensure_index, get_retriever
-from case_2.steps import s1_retrieve, s2_path_recall, s3_anchor, s4_clip_render
+from case_2.faiss_index import ensure_index
+from case_2.steps.s1_retrieve import get_nodes
+from case_2.steps import s2_path_recall, s3_anchor, s4_clip_render
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ async def run(
     Returns:
         {
             "query": str,
-            "candidates": [(id, score, node), ...],
+            "candidates": [{"id", "name", "level", ..., "score"}, ...],
             "recalled_paths": [{"hit_node", "score", "path", "path_str"}, ...],
             "anchors": [{"id", "name", "level", "reason"}, ...],
             "subtree": dict,
@@ -55,9 +56,8 @@ async def run(
     """
     kb = _get_kb()
 
-    # 启动时确保 FAISS 索引存在（首次运行会调用 embedding API 构建）
+    # 确保 FAISS 索引存在（首次或 nodes.json 变更后重建）
     await ensure_index(list(kb.nodes.values()), embedding_svc)
-    retriever = get_retriever(embedding_svc)
 
     logger.info(f"\n{'='*60}")
     logger.info(f"[workflow] 开始处理: {query!r}")
@@ -65,19 +65,26 @@ async def run(
 
     # S1 FAISS 向量检索
     logger.info("\n── S1 FAISS 向量检索 ──")
-    candidates = await s1_retrieve.run(query, kb, retriever,
-                                       top_k=top_k, score_threshold=score_threshold)
+    candidates = await get_nodes(query, embedding_svc,
+                                 top_k=top_k, score_threshold=score_threshold)
 
-    # S2 路径召回
+    if not candidates:
+        return {
+            "query": query, "candidates": [],
+            "recalled_paths": [], "anchors": [], "subtree": None,
+            "markdown": "（未能匹配到相关知识节点，请换一种提问方式）",
+        }
+
+    # S2 路径召回（将 candidate dict 转换为 s2 期望的格式）
     logger.info("\n── S2 路径召回 ──")
-    recalled_paths = s2_path_recall.run(candidates, kb)
+    candidates_for_s2 = [(n["id"], n["score"], n) for n in candidates]
+    recalled_paths = s2_path_recall.run(candidates_for_s2, kb)
 
     if not recalled_paths:
-        logger.warning("[workflow] 路径召回为空，无法生成大纲")
         return {
             "query": query, "candidates": candidates,
             "recalled_paths": [], "anchors": [], "subtree": None,
-            "markdown": "（未能匹配到相关知识节点，请换一种提问方式）",
+            "markdown": "（路径召回失败，请检查知识库关系数据）",
         }
 
     # S3 LLM 选锚节点
