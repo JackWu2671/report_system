@@ -17,12 +17,13 @@ import re
 import sys
 from pathlib import Path
 
-_BACKEND = Path(__file__).parent.parent
+_CASE2_DIR = Path(__file__).parent
+_BACKEND = _CASE2_DIR.parent
 sys.path.insert(0, str(_BACKEND))
 
 try:
     from dotenv import load_dotenv
-    load_dotenv(_BACKEND / ".env")
+    load_dotenv(_CASE2_DIR / ".env")   # case_2/.env 优先
 except ImportError:
     pass
 
@@ -43,6 +44,9 @@ LLM_THINK_TAG_MODE = os.getenv("LLM_THINK_TAG_MODE", "none")
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL") or LLM_BASE_URL
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-m3")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))
+
+FAISS_TOP_K = int(os.getenv("FAISS_TOP_K", "8"))
+FAISS_SCORE_THRESHOLD = float(os.getenv("FAISS_SCORE_THRESHOLD", "0.5"))
 
 
 async def _call_llm(prompt: str) -> str:
@@ -94,7 +98,8 @@ async def main():
         model=EMBEDDING_MODEL,
         dim=EMBEDDING_DIM,
     )
-    result = await run(query, _call_llm, embedding_svc)
+    result = await run(query, _call_llm, embedding_svc,
+                       top_k=FAISS_TOP_K, score_threshold=FAISS_SCORE_THRESHOLD)
 
     print("\n" + "=" * 60)
     print("【分析框架大纲】")

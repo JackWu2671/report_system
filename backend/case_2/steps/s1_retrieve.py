@@ -7,19 +7,23 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-TOP_K = 8  # 召回候选数量
-
-
-async def run(query: str, kb, retriever) -> list[tuple[str, float, dict]]:
+async def run(
+    query: str,
+    kb,
+    retriever,
+    top_k: int = 8,
+    score_threshold: float = 0.5,
+) -> list[tuple[str, float, dict]]:
     """
     kb:        KBStore 实例
     retriever: FaissRetriever 实例
 
-    返回 [(node_id, score, node), ...]
+    返回 [(node_id, score, node), ...]，仅保留 score >= score_threshold 的结果
     """
-    logger.info(f"[S1-FAISS检索] query: {query!r}")
+    logger.info(f"[S1-FAISS检索] query: {query!r}  top_k={top_k}  threshold={score_threshold}")
 
-    hits = await retriever.search(query, top_k=TOP_K)
+    hits = await retriever.search(query, top_k=top_k)
+    hits = [(nid, s) for nid, s in hits if s >= score_threshold]
 
     results = []
     for node_id, score in hits:

@@ -26,13 +26,22 @@ def _get_kb() -> KBStore:
     return _kb
 
 
-async def run(query: str, llm_fn, embedding_svc: EmbeddingService) -> dict:
+async def run(
+    query: str,
+    llm_fn,
+    embedding_svc: EmbeddingService,
+    top_k: int = 8,
+    score_threshold: float = 0.5,
+) -> dict:
     """
     执行完整工作流。
 
     Args:
-        query:   用户输入的自然语言问题
-        llm_fn:  async callable(prompt: str) -> str
+        query:            用户输入的自然语言问题
+        llm_fn:           async callable(prompt: str) -> str
+        embedding_svc:    EmbeddingService 实例
+        top_k:            FAISS 检索返回候选数量
+        score_threshold:  FAISS 相似度过滤阈值
 
     Returns:
         {
@@ -56,7 +65,8 @@ async def run(query: str, llm_fn, embedding_svc: EmbeddingService) -> dict:
 
     # S1 FAISS 向量检索
     logger.info("\n── S1 FAISS 向量检索 ──")
-    candidates = await s1_retrieve.run(query, kb, retriever)
+    candidates = await s1_retrieve.run(query, kb, retriever,
+                                       top_k=top_k, score_threshold=score_threshold)
 
     # S2 路径召回
     logger.info("\n── S2 路径召回 ──")
